@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 #
-# Sends BFF / Llama Stack compatibility test results to Slack via webhook.
+# Sends BFF / Llama Stack compatibility test results to a Slack Workflow
+# Builder webhook. The webhook expects flat JSON variables that are then
+# composed into a message by the Workflow Builder "Send a message" step.
 #
 # Required environment variables:
-#   SLACK_WEBHOOK_URL   - Slack Incoming Webhook URL
+#   SLACK_WEBHOOK_URL   - Slack Workflow Builder webhook URL
 #   LLS_VERSION         - Llama Stack version that was tested
 #   LLS_PINNED_VERSION  - Pinned version from the Makefile
 #   REPLAY_RESULT       - "success" | "failure"
 #   RECORD_RESULT       - "success" | "failure" | "skipped"
 #   WORKFLOW_RUN_URL    - Full URL to the GitHub Actions run
 #   TRIGGER             - GitHub event name (schedule, workflow_dispatch, push, pull_request)
+#
+# Slack Workflow Builder setup:
+#   1. Create a workflow with trigger "Starts with a webhook"
+#   2. Define text variables: status, status_emoji, tested_version,
+#      pinned_version, recording_required, trigger, context, workflow_run_url
+#   3. Add a "Send a message" step using those variables in the template
 
 set -euo pipefail
 
@@ -49,92 +57,40 @@ json_escape() {
 }
 
 # ---------------------------------------------------------------------------
-# Determine status, color, and messaging
+# Determine status and messaging
 # ---------------------------------------------------------------------------
 
 if [[ "$REPLAY_RESULT" == "success" ]]; then
-  COLOR="#36a64f"
-  HEADER=":white_check_mark: BFF Compatibility: COMPATIBLE"
+  STATUS="COMPATIBLE"
+  STATUS_EMOJI=":white_check_mark:"
   RECORDING_FIELD="Not required"
   CONTEXT="Existing test fixtures passed against Llama Stack ${LLS_VERSION}. No action required."
 elif [[ "$RECORD_RESULT" == "success" ]]; then
-  COLOR="#ff9900"
-  HEADER=":warning: BFF Compatibility: COMPATIBLE (recording required)"
-  RECORDING_FIELD="Yes — fixtures need updating"
-  CONTEXT="Replay fixtures failed but live recording passed. The BFF is compatible with Llama Stack ${LLS_VERSION}, but fixtures need re-recording.\n*Action:* Run \`make llamastack-record\` and commit updated recordings to odh-dashboard."
+  STATUS="COMPATIBLE (recording required)"
+  STATUS_EMOJI=":warning:"
+  RECORDING_FIELD="Yes -- fixtures need updating"
+  CONTEXT="Replay fixtures failed but live recording passed. The BFF is compatible with Llama Stack ${LLS_VERSION}, but fixtures need re-recording. Action: Run make llamastack-record and commit updated recordings to odh-dashboard."
 else
-  COLOR="#dc3545"
-  HEADER=":x: BFF Compatibility: INCOMPATIBLE"
-  RECORDING_FIELD="N/A — both tests failed"
-  CONTEXT="Both replay and live recording tests failed against Llama Stack ${LLS_VERSION}. BFF code changes may be needed.\n*Action:* Investigate the workflow run logs."
+  STATUS="INCOMPATIBLE"
+  STATUS_EMOJI=":x:"
+  RECORDING_FIELD="N/A -- both tests failed"
+  CONTEXT="Both replay and live recording tests failed against Llama Stack ${LLS_VERSION}. BFF code changes may be needed. Action: Investigate the workflow run logs."
 fi
 
 # ---------------------------------------------------------------------------
-# Build Slack Block Kit payload (all values JSON-escaped)
+# Build flat JSON payload for Slack Workflow Builder (all values escaped)
 # ---------------------------------------------------------------------------
-
-E_HEADER=$(json_escape "$HEADER")
-E_VERSION=$(json_escape "$LLS_VERSION")
-E_PINNED=$(json_escape "$LLS_PINNED_VERSION")
-E_RECORDING=$(json_escape "$RECORDING_FIELD")
-E_TRIGGER=$(json_escape "$TRIGGER")
-E_CONTEXT=$(json_escape "$CONTEXT")
-E_URL=$(json_escape "$WORKFLOW_RUN_URL")
 
 PAYLOAD=$(cat <<EOF
 {
-  "attachments": [
-    {
-      "color": "${COLOR}",
-      "blocks": [
-        {
-          "type": "header",
-          "text": {
-            "type": "plain_text",
-            "text": "Gen AI BFF — Llama Stack Compatibility",
-            "emoji": true
-          }
-        },
-        {
-          "type": "section",
-          "text": {
-            "type": "mrkdwn",
-            "text": "${E_HEADER}"
-          }
-        },
-        {
-          "type": "section",
-          "fields": [
-            { "type": "mrkdwn", "text": "*Tested Version*\n${E_VERSION}" },
-            { "type": "mrkdwn", "text": "*Pinned Version*\n${E_PINNED}" },
-            { "type": "mrkdwn", "text": "*Recording Required*\n${E_RECORDING}" },
-            { "type": "mrkdwn", "text": "*Trigger*\n${E_TRIGGER}" }
-          ]
-        },
-        {
-          "type": "section",
-          "text": {
-            "type": "mrkdwn",
-            "text": "${E_CONTEXT}"
-          }
-        },
-        {
-          "type": "actions",
-          "elements": [
-            {
-              "type": "button",
-              "text": {
-                "type": "plain_text",
-                "text": "View Workflow Run",
-                "emoji": true
-              },
-              "url": "${E_URL}"
-            }
-          ]
-        }
-      ]
-    }
-  ]
+  "status": "$(json_escape "$STATUS")",
+  "status_emoji": "$(json_escape "$STATUS_EMOJI")",
+  "tested_version": "$(json_escape "$LLS_VERSION")",
+  "pinned_version": "$(json_escape "$LLS_PINNED_VERSION")",
+  "recording_required": "$(json_escape "$RECORDING_FIELD")",
+  "trigger": "$(json_escape "$TRIGGER")",
+  "context": "$(json_escape "$CONTEXT")",
+  "workflow_run_url": "$(json_escape "$WORKFLOW_RUN_URL")"
 }
 EOF
 )
