@@ -1,0 +1,175 @@
+name: 'Gen AI - BFF - Nightly LLS Compatibility'
+
+on:
+  # schedule:
+  #   - cron: '0 6 * * 3' # Every Wednesday at 6:00 AM UTC
+
+  workflow_dispatch:
+    inputs:
+      llama_stack_version:
+        description: 'Llama Stack version to test (leave empty for latest from PyPI)'
+        required: false
+        type: string
+
+  push:
+    paths:
+      - '.github/workflows/gen-ai-bff-nightly.yml'
+      - 'scripts/**'
+
+  pull_request:
+    paths:
+      - '.github/workflows/gen-ai-bff-nightly.yml'
+      - 'scripts/**'
+
+jobs:
+  test-latest-llamastack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout odh-automations
+        uses: actions/checkout@v4
+
+      - name: Checkout odh-dashboard
+        uses: actions/checkout@v4
+        with:
+          repository: Lucifergene/odh-dashboard
+          ref: real-lls
+          path: odh-dashboard
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.3'
+
+      - name: Resolve Llama Stack version
+        id: resolve-version
+        run: |
+          if [[ -n "${{ inputs.llama_stack_version }}" ]]; then
+            VERSION="${{ inputs.llama_stack_version }}"
+            echo "Source: workflow_dispatch input"
+          elif [[ "${{ github.event_name }}" == "schedule" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION=$(curl -sf https://pypi.org/pypi/llama-stack/json | jq -r '.info.version')
+            if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
+              echo "::error::Failed to fetch latest version from PyPI"
+              exit 1
+            fi
+            echo "Source: PyPI (latest)"
+          else
+            VERSION=""
+            echo "Source: Makefile default (push/pull_request trigger)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved Llama Stack version: ${VERSION:-<Makefile default>}"
+
+      - name: Run BFF tests (replay mode)
+        id: replay-test
+        continue-on-error: true
+        working-directory: odh-dashboard/packages/gen-ai/bff
+        run: |
+          if [[ -n "${{ steps.resolve-version.outputs.version }}" ]]; then
+            echo "Testing with Llama Stack ${{ steps.resolve-version.outputs.version }}"
+            TEST_LLAMA_STACK_VERSION=${{ steps.resolve-version.outputs.version }} make test
+          else
+            echo "Testing with pinned Makefile version"
+            make test
+          fi
+
+      - name: Run BFF tests (recording mode)
+        id: record-test
+        if: steps.replay-test.outcome == 'failure'
+        continue-on-error: true
+        working-directory: odh-dashboard/packages/gen-ai/bff
+        env:
+          GEMINI_API_KEY: ${{ secrets.GFEMINI_API_KEY }} # repo secret → Makefile's GEMINI_API_KEY
+        run: |
+          if [[ -n "${{ steps.resolve-version.outputs.version }}" ]]; then
+            echo "Recording with Llama Stack ${{ steps.resolve-version.outputs.version }}"
+            TEST_LLAMA_STACK_VERSION=${{ steps.resolve-version.outputs.version }} make llamastack-record
+          else
+            echo "Recording with pinned Makefile version"
+            make llamastack-record
+          fi
+
+      - name: Determine result
+        id: determine-result
+        if: always()
+        working-directory: odh-dashboard/packages/gen-ai/bff
+        run: |
+          PINNED=$(grep -m1 'TEST_LLAMA_STACK_VERSION ?=' Makefile | sed -E 's/.*\?= //')
+          TESTED="${{ steps.resolve-version.outputs.version }}"
+          TESTED="${TESTED:-$PINNED}"
+
+          if [[ "${{ steps.replay-test.outcome }}" == "success" ]]; then
+            STATUS="compatible"
+            RECORDING_REQUIRED="false"
+          elif [[ "${{ steps.record-test.outcome }}" == "success" ]]; then
+            STATUS="compatible"
+            RECORDING_REQUIRED="true"
+          else
+            STATUS="incompatible"
+            RECORDING_REQUIRED="false"
+          fi
+
+          REPLAY_RESULT="${{ steps.replay-test.outcome }}"
+          RECORD_RESULT="${{ steps.record-test.outcome }}"
+          # When record-test was skipped (replay passed), mark as "skipped"
+          if [[ -z "$RECORD_RESULT" || "$RECORD_RESULT" == "skipped" ]]; then
+            RECORD_RESULT="skipped"
+          fi
+
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "recording_required=$RECORDING_REQUIRED" >> "$GITHUB_OUTPUT"
+          echo "tested_version=$TESTED" >> "$GITHUB_OUTPUT"
+          echo "pinned_version=$PINNED" >> "$GITHUB_OUTPUT"
+          echo "replay_result=$REPLAY_RESULT" >> "$GITHUB_OUTPUT"
+          echo "record_result=$RECORD_RESULT" >> "$GITHUB_OUTPUT"
+
+          echo "Status: $STATUS | Recording required: $RECORDING_REQUIRED"
+          echo "Tested: $TESTED | Pinned: $PINNED"
+          echo "Replay: $REPLAY_RESULT | Record: $RECORD_RESULT"
+
+      - name: Send Slack notification
+        if: always() && steps.determine-result.outcome == 'success'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          LLS_VERSION: ${{ steps.determine-result.outputs.tested_version }}
+          LLS_PINNED_VERSION: ${{ steps.determine-result.outputs.pinned_version }}
+          REPLAY_RESULT: ${{ steps.determine-result.outputs.replay_result }}
+          RECORD_RESULT: ${{ steps.determine-result.outputs.record_result }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TRIGGER: ${{ github.event_name }}
+        run: ./scripts/notify-slack.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          STATUS="${{ steps.determine-result.outputs.status }}"
+          TESTED="${{ steps.determine-result.outputs.tested_version }}"
+          PINNED="${{ steps.determine-result.outputs.pinned_version }}"
+          RECORDING="${{ steps.determine-result.outputs.recording_required }}"
+
+          if [[ "$STATUS" == "compatible" && "$RECORDING" == "false" ]]; then
+            DISPLAY_STATUS="COMPATIBLE"
+          elif [[ "$STATUS" == "compatible" && "$RECORDING" == "true" ]]; then
+            DISPLAY_STATUS="COMPATIBLE (recording required)"
+          else
+            DISPLAY_STATUS="INCOMPATIBLE"
+          fi
+
+          {
+            echo "## Gen AI BFF - Llama Stack Compatibility Test"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| **Status** | ${DISPLAY_STATUS} |"
+            echo "| **Tested version** | ${TESTED} |"
+            echo "| **Pinned version** | ${PINNED} |"
+            echo "| **Recording required** | ${RECORDING} |"
+            echo "| **Trigger** | ${{ github.event_name }} |"
+            echo "| **Branch** | ${{ github.ref_name }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if incompatible
+        if: always() && steps.determine-result.outputs.status == 'incompatible'
+        run: |
+          echo "::error::Llama Stack ${{ steps.determine-result.outputs.tested_version }} is incompatible with the BFF"
+          exit 1
