@@ -46,16 +46,13 @@ jobs:
           if [[ -n "${{ inputs.llama_stack_version }}" ]]; then
             VERSION="${{ inputs.llama_stack_version }}"
             echo "Source: workflow_dispatch input"
-          elif [[ "${{ github.event_name }}" == "schedule" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          else
             VERSION=$(curl -sf https://pypi.org/pypi/llama-stack/json | jq -r '.info.version')
             if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
               echo "::error::Failed to fetch latest version from PyPI"
               exit 1
             fi
             echo "Source: PyPI (latest)"
-          else
-            VERSION=""
-            echo "Source: Makefile default (push/pull_request trigger)"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved Llama Stack version: ${VERSION:-<Makefile default>}"
