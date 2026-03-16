@@ -1,13 +1,13 @@
-name: 'Gen AI - BFF - Nightly LLS Compatibility'
+name: 'Gen AI - BFF - Llama Stack Compatibility'
 
 on:
   # schedule:
-  #   - cron: '0 6 * * 3' # Every Wednesday at 6:00 AM UTC
+  #   - cron: '0 6 * * 1' # Every Monday at 6:00 AM UTC
 
   workflow_dispatch:
     inputs:
       llama_stack_version:
-        description: 'Llama Stack version to test (leave empty for latest from PyPI)'
+        description: 'Llama Stack version to test (leave empty for latest). Dev versions (containing "dev") auto-resolve from test.pypi.org.'
         required: false
         type: string
 
@@ -22,8 +22,41 @@ on:
       - 'scripts/**'
 
 jobs:
-  test-latest-llamastack:
+  # ---------------------------------------------------------------------------
+  # Job 1: Determine which sources to test (stable, dev, or both)
+  # ---------------------------------------------------------------------------
+  setup:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      manual_version: ${{ inputs.llama_stack_version }}
+    steps:
+      - name: Build test matrix
+        id: set-matrix
+        run: |
+          VERSION="${{ inputs.llama_stack_version }}"
+          if [[ -n "$VERSION" ]]; then
+            if [[ "$VERSION" == *dev* ]]; then
+              echo 'matrix={"include":[{"source":"dev"}]}' >> "$GITHUB_OUTPUT"
+              echo "Manual dispatch: dev version $VERSION"
+            else
+              echo 'matrix={"include":[{"source":"stable"}]}' >> "$GITHUB_OUTPUT"
+              echo "Manual dispatch: stable version $VERSION"
+            fi
+          else
+            echo 'matrix={"include":[{"source":"stable"},{"source":"dev"}]}' >> "$GITHUB_OUTPUT"
+            echo "Auto mode: testing both stable and dev"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Run BFF tests (parallel matrix: stable + dev)
+  # ---------------------------------------------------------------------------
+  test:
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     steps:
       - name: Checkout odh-automations
         uses: actions/checkout@v4
@@ -43,32 +76,50 @@ jobs:
       - name: Resolve Llama Stack version
         id: resolve-version
         run: |
-          if [[ -n "${{ inputs.llama_stack_version }}" ]]; then
-            VERSION="${{ inputs.llama_stack_version }}"
-            echo "Source: workflow_dispatch input"
+          MANUAL="${{ needs.setup.outputs.manual_version }}"
+          if [[ -n "$MANUAL" ]]; then
+            VERSION="$MANUAL"
+            echo "Source: manual input"
+          elif [[ "${{ matrix.source }}" == "dev" ]]; then
+            VERSION=$(curl -sf https://test.pypi.org/pypi/llama-stack/json \
+              | jq -r '[.releases | keys[] | select(contains("dev"))] | sort | last')
+            if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
+              echo "::error::Failed to fetch latest dev version from test.pypi.org"
+              exit 1
+            fi
+            echo "Source: test.pypi.org (latest dev)"
           else
             VERSION=$(curl -sf https://pypi.org/pypi/llama-stack/json | jq -r '.info.version')
             if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
-              echo "::error::Failed to fetch latest version from PyPI"
+              echo "::error::Failed to fetch latest stable version from PyPI"
               exit 1
             fi
-            echo "Source: PyPI (latest)"
+            echo "Source: pypi.org (latest stable)"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Resolved Llama Stack version: ${VERSION:-<Makefile default>}"
+          echo "Resolved version: $VERSION (source: ${{ matrix.source }})"
+
+      - name: Download dev wheels from test.pypi.org
+        if: matrix.source == 'dev' || contains(needs.setup.outputs.manual_version, 'dev')
+        run: |
+          VERSION="${{ steps.resolve-version.outputs.version }}"
+          mkdir -p /tmp/lls-wheel
+          pip download "llama-stack==$VERSION" "llama-stack-api==$VERSION" \
+            --index-url https://test.pypi.org/simple/ \
+            --no-deps \
+            -d /tmp/lls-wheel/
+          echo "Downloaded wheels:"
+          ls -la /tmp/lls-wheel/
 
       - name: Run BFF tests (replay mode)
         id: replay-test
         continue-on-error: true
         working-directory: odh-dashboard/packages/gen-ai/bff
+        env:
+          UV_FIND_LINKS: ${{ (matrix.source == 'dev' || contains(needs.setup.outputs.manual_version, 'dev')) && '/tmp/lls-wheel' || '' }}
         run: |
-          if [[ -n "${{ steps.resolve-version.outputs.version }}" ]]; then
-            echo "Testing with Llama Stack ${{ steps.resolve-version.outputs.version }}"
-            TEST_LLAMA_STACK_VERSION=${{ steps.resolve-version.outputs.version }} make test
-          else
-            echo "Testing with pinned Makefile version"
-            make test
-          fi
+          echo "Testing with Llama Stack ${{ steps.resolve-version.outputs.version }} (source: ${{ matrix.source }})"
+          TEST_LLAMA_STACK_VERSION=${{ steps.resolve-version.outputs.version }} make test
 
       - name: Run BFF tests (recording mode)
         id: record-test
@@ -76,15 +127,11 @@ jobs:
         continue-on-error: true
         working-directory: odh-dashboard/packages/gen-ai/bff
         env:
-          GEMINI_API_KEY: ${{ secrets.GFEMINI_API_KEY }} # repo secret → Makefile's GEMINI_API_KEY
+          GEMINI_API_KEY: ${{ secrets.GFEMINI_API_KEY }}
+          UV_FIND_LINKS: ${{ (matrix.source == 'dev' || contains(needs.setup.outputs.manual_version, 'dev')) && '/tmp/lls-wheel' || '' }}
         run: |
-          if [[ -n "${{ steps.resolve-version.outputs.version }}" ]]; then
-            echo "Recording with Llama Stack ${{ steps.resolve-version.outputs.version }}"
-            TEST_LLAMA_STACK_VERSION=${{ steps.resolve-version.outputs.version }} make llamastack-record
-          else
-            echo "Recording with pinned Makefile version"
-            make llamastack-record
-          fi
+          echo "Recording with Llama Stack ${{ steps.resolve-version.outputs.version }} (source: ${{ matrix.source }})"
+          TEST_LLAMA_STACK_VERSION=${{ steps.resolve-version.outputs.version }} make llamastack-record
 
       - name: Determine result
         id: determine-result
@@ -108,7 +155,6 @@ jobs:
 
           REPLAY_RESULT="${{ steps.replay-test.outcome }}"
           RECORD_RESULT="${{ steps.record-test.outcome }}"
-          # When record-test was skipped (replay passed), mark as "skipped"
           if [[ -z "$RECORD_RESULT" || "$RECORD_RESULT" == "skipped" ]]; then
             RECORD_RESULT="skipped"
           fi
@@ -120,53 +166,144 @@ jobs:
           echo "replay_result=$REPLAY_RESULT" >> "$GITHUB_OUTPUT"
           echo "record_result=$RECORD_RESULT" >> "$GITHUB_OUTPUT"
 
-          echo "Status: $STATUS | Recording required: $RECORDING_REQUIRED"
-          echo "Tested: $TESTED | Pinned: $PINNED"
-          echo "Replay: $REPLAY_RESULT | Record: $RECORD_RESULT"
+          echo "[${{ matrix.source }}] Status: $STATUS | Recording required: $RECORDING_REQUIRED"
+          echo "[${{ matrix.source }}] Tested: $TESTED | Pinned: $PINNED"
+          echo "[${{ matrix.source }}] Replay: $REPLAY_RESULT | Record: $RECORD_RESULT"
 
-      - name: Send Slack notification
+      - name: Write result artifact
         if: always() && steps.determine-result.outcome == 'success'
+        run: |
+          mkdir -p /tmp/results
+          cat > "/tmp/results/results-${{ matrix.source }}.json" <<ARTIFACT
+          {
+            "source": "${{ matrix.source }}",
+            "tested_version": "${{ steps.determine-result.outputs.tested_version }}",
+            "pinned_version": "${{ steps.determine-result.outputs.pinned_version }}",
+            "status": "${{ steps.determine-result.outputs.status }}",
+            "recording_required": "${{ steps.determine-result.outputs.recording_required }}",
+            "replay_result": "${{ steps.determine-result.outputs.replay_result }}",
+            "record_result": "${{ steps.determine-result.outputs.record_result }}"
+          }
+          ARTIFACT
+          cat "/tmp/results/results-${{ matrix.source }}.json"
+
+      - name: Upload result artifact
+        if: always() && steps.determine-result.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ matrix.source }}
+          path: /tmp/results/results-${{ matrix.source }}.json
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Collect results and send combined Slack notification
+  # ---------------------------------------------------------------------------
+  notify:
+    needs: [setup, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for notify script)
+        uses: actions/checkout@v4
+
+      - name: Download all result artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/results
+          merge-multiple: true
+
+      - name: Parse results and notify
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          LLS_VERSION: ${{ steps.determine-result.outputs.tested_version }}
-          LLS_PINNED_VERSION: ${{ steps.determine-result.outputs.pinned_version }}
-          REPLAY_RESULT: ${{ steps.determine-result.outputs.replay_result }}
-          RECORD_RESULT: ${{ steps.determine-result.outputs.record_result }}
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TRIGGER: ${{ github.event_name }}
-        run: ./scripts/notify-slack.sh
+        run: |
+          echo "=== Downloaded artifacts ==="
+          ls -la /tmp/results/ 2>/dev/null || echo "No artifacts found"
+
+          # Parse stable results (if present)
+          if [[ -f /tmp/results/results-stable.json ]]; then
+            export STABLE_VERSION=$(jq -r '.tested_version' /tmp/results/results-stable.json)
+            export STABLE_PINNED=$(jq -r '.pinned_version' /tmp/results/results-stable.json)
+            export STABLE_STATUS=$(jq -r '.status' /tmp/results/results-stable.json)
+            export STABLE_RECORDING=$(jq -r '.recording_required' /tmp/results/results-stable.json)
+            export STABLE_REPLAY=$(jq -r '.replay_result' /tmp/results/results-stable.json)
+            export STABLE_RECORD=$(jq -r '.record_result' /tmp/results/results-stable.json)
+            echo "Stable: $STABLE_VERSION -> $STABLE_STATUS"
+          else
+            export STABLE_VERSION="" STABLE_PINNED="" STABLE_STATUS=""
+            export STABLE_RECORDING="" STABLE_REPLAY="" STABLE_RECORD=""
+            echo "Stable: not tested"
+          fi
+
+          # Parse dev results (if present)
+          if [[ -f /tmp/results/results-dev.json ]]; then
+            export DEV_VERSION=$(jq -r '.tested_version' /tmp/results/results-dev.json)
+            export DEV_PINNED=$(jq -r '.pinned_version' /tmp/results/results-dev.json)
+            export DEV_STATUS=$(jq -r '.status' /tmp/results/results-dev.json)
+            export DEV_RECORDING=$(jq -r '.recording_required' /tmp/results/results-dev.json)
+            export DEV_REPLAY=$(jq -r '.replay_result' /tmp/results/results-dev.json)
+            export DEV_RECORD=$(jq -r '.record_result' /tmp/results/results-dev.json)
+            echo "Dev: $DEV_VERSION -> $DEV_STATUS"
+          else
+            export DEV_VERSION="" DEV_PINNED="" DEV_STATUS=""
+            export DEV_RECORDING="" DEV_REPLAY="" DEV_RECORD=""
+            echo "Dev: not tested"
+          fi
+
+          chmod +x ./scripts/notify-slack.sh
+          ./scripts/notify-slack.sh
 
       - name: Summary
         if: always()
         run: |
-          STATUS="${{ steps.determine-result.outputs.status }}"
-          TESTED="${{ steps.determine-result.outputs.tested_version }}"
-          PINNED="${{ steps.determine-result.outputs.pinned_version }}"
-          RECORDING="${{ steps.determine-result.outputs.recording_required }}"
-
-          if [[ "$STATUS" == "compatible" && "$RECORDING" == "false" ]]; then
-            DISPLAY_STATUS="COMPATIBLE"
-          elif [[ "$STATUS" == "compatible" && "$RECORDING" == "true" ]]; then
-            DISPLAY_STATUS="COMPATIBLE (recording required)"
-          else
-            DISPLAY_STATUS="INCOMPATIBLE"
-          fi
-
           {
             echo "## Gen AI BFF - Llama Stack Compatibility Test"
             echo ""
+            echo "| Source | Version | Status | Recording Required |"
+            echo "|--------|---------|--------|--------------------|"
+
+            if [[ -f /tmp/results/results-stable.json ]]; then
+              V=$(jq -r '.tested_version' /tmp/results/results-stable.json)
+              S=$(jq -r '.status' /tmp/results/results-stable.json)
+              R=$(jq -r '.recording_required' /tmp/results/results-stable.json)
+              echo "| **Stable** (pypi.org) | $V | $S | $R |"
+            fi
+
+            if [[ -f /tmp/results/results-dev.json ]]; then
+              V=$(jq -r '.tested_version' /tmp/results/results-dev.json)
+              S=$(jq -r '.status' /tmp/results/results-dev.json)
+              R=$(jq -r '.recording_required' /tmp/results/results-dev.json)
+              echo "| **Dev** (test.pypi.org) | $V | $S | $R |"
+            fi
+
+            echo ""
             echo "| Field | Value |"
             echo "|-------|-------|"
-            echo "| **Status** | ${DISPLAY_STATUS} |"
-            echo "| **Tested version** | ${TESTED} |"
-            echo "| **Pinned version** | ${PINNED} |"
-            echo "| **Recording required** | ${RECORDING} |"
             echo "| **Trigger** | ${{ github.event_name }} |"
             echo "| **Branch** | ${{ github.ref_name }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Fail if incompatible
-        if: always() && steps.determine-result.outputs.status == 'incompatible'
+      - name: Fail if any source is incompatible
+        if: always()
         run: |
-          echo "::error::Llama Stack ${{ steps.determine-result.outputs.tested_version }} is incompatible with the BFF"
-          exit 1
+          FAIL=false
+          if [[ -f /tmp/results/results-stable.json ]]; then
+            S=$(jq -r '.status' /tmp/results/results-stable.json)
+            V=$(jq -r '.tested_version' /tmp/results/results-stable.json)
+            if [[ "$S" == "incompatible" ]]; then
+              echo "::error::Stable Llama Stack $V is incompatible with the BFF"
+              FAIL=true
+            fi
+          fi
+          if [[ -f /tmp/results/results-dev.json ]]; then
+            S=$(jq -r '.status' /tmp/results/results-dev.json)
+            V=$(jq -r '.tested_version' /tmp/results/results-dev.json)
+            if [[ "$S" == "incompatible" ]]; then
+              echo "::error::Dev Llama Stack $V is incompatible with the BFF"
+              FAIL=true
+            fi
+          fi
+          if [[ "$FAIL" == "true" ]]; then
+            exit 1
+          fi
