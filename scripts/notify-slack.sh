@@ -12,11 +12,12 @@
 # Optional (per-source) environment variables:
 #   STABLE_VERSION, STABLE_STATUS, STABLE_RECORDING, STABLE_REPLAY, STABLE_RECORD, STABLE_PINNED
 #   DEV_VERSION, DEV_STATUS, DEV_RECORDING, DEV_REPLAY, DEV_RECORD, DEV_PINNED
+#   POST_TO_CHANNEL - "true" to post to Slack channel, "false" to skip (default: "false")
 #
 # Slack Workflow Builder setup:
 #   1. Create a workflow with trigger "Starts with a webhook"
 #   2. Define text variables: overall_status, overall_emoji, stable_summary,
-#      dev_summary, details, trigger, workflow_run_url
+#      dev_summary, details, trigger, workflow_run_url, post_to_channel
 #   3. Add a "Send a message" step using those variables in the template
 
 set -euo pipefail
@@ -155,7 +156,8 @@ PAYLOAD=$(cat <<EOF
   "dev_summary": "$(json_escape "$DEV_SUMMARY")",
   "details": "$(json_escape "$DETAILS")",
   "trigger": "$(json_escape "$TRIGGER")",
-  "workflow_run_url": "$(json_escape "$WORKFLOW_RUN_URL")"
+  "workflow_run_url": "$(json_escape "$WORKFLOW_RUN_URL")",
+  "post_to_channel": "$(json_escape "${POST_TO_CHANNEL:-false}")"
 }
 EOF
 )

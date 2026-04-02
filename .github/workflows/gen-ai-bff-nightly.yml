@@ -10,6 +10,11 @@ on:
         description: 'Llama Stack version to test (leave empty for latest). Dev versions (containing "dev") auto-resolve from test.pypi.org.'
         required: false
         type: string
+      post_to_channel:
+        description: 'Post results to Slack channel (automated runs always skip channel posting)'
+        required: false
+        type: boolean
+        default: false
 
   push:
     paths:
@@ -217,6 +222,7 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TRIGGER: ${{ github.event_name }}
+          POST_TO_CHANNEL: ${{ inputs.post_to_channel == true && 'true' || 'false' }}
         run: |
           echo "=== Downloaded artifacts ==="
           ls -la /tmp/results/ 2>/dev/null || echo "No artifacts found"
