@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Sends BFF / Llama Stack compatibility test results to a Slack Workflow
+# Sends BFF / OGX compatibility test results to a Slack Workflow
 # Builder webhook. Handles results for stable (pypi.org) and/or dev
 # (test.pypi.org) builds, combining them into a single notification.
 #

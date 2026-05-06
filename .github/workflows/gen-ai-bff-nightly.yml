@@ -1,4 +1,4 @@
-name: 'Gen AI - BFF - Llama Stack Compatibility'
+name: 'Gen AI - BFF - OGX Compatibility'
 
 on:
   schedule:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       llama_stack_version:
-        description: 'Llama Stack version to test (leave empty for latest). Dev versions (containing "dev") auto-resolve from test.pypi.org.'
+        description: 'OGX version to test (leave empty for latest). Dev versions (containing "dev") auto-resolve from test.pypi.org.'
         required: false
         type: string
       post_to_channel:
@@ -78,7 +78,7 @@ jobs:
         with:
           go-version: '1.24.3'
 
-      - name: Resolve Llama Stack version
+      - name: Resolve OGX version
         id: resolve-version
         run: |
           MANUAL="${{ needs.setup.outputs.manual_version }}"
@@ -86,7 +86,7 @@ jobs:
             VERSION="$MANUAL"
             echo "Source: manual input"
           elif [[ "${{ matrix.source }}" == "dev" ]]; then
-            VERSION=$(curl -sf https://test.pypi.org/pypi/llama-stack/json \
+            VERSION=$(curl -sf https://test.pypi.org/pypi/ogx/json \
               | jq -r '[.releases | keys[] | select(contains("dev"))] | sort | last')
             if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
               echo "::error::Failed to fetch latest dev version from test.pypi.org"
@@ -94,7 +94,7 @@ jobs:
             fi
             echo "Source: test.pypi.org (latest dev)"
           else
-            VERSION=$(curl -sf https://pypi.org/pypi/llama-stack/json | jq -r '.info.version')
+            VERSION=$(curl -sf https://pypi.org/pypi/ogx/json | jq -r '.info.version')
             if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
               echo "::error::Failed to fetch latest stable version from PyPI"
               exit 1
@@ -108,22 +108,22 @@ jobs:
         if: matrix.source == 'dev' || contains(needs.setup.outputs.manual_version, 'dev')
         run: |
           VERSION="${{ steps.resolve-version.outputs.version }}"
-          mkdir -p /tmp/lls-wheel
-          pip download "llama-stack==$VERSION" "llama-stack-api==$VERSION" \
+          mkdir -p /tmp/ogx-wheel
+          pip download "ogx==$VERSION" "ogx-api==$VERSION" \
             --index-url https://test.pypi.org/simple/ \
             --no-deps \
-            -d /tmp/lls-wheel/
+            -d /tmp/ogx-wheel/
           echo "Downloaded wheels:"
-          ls -la /tmp/lls-wheel/
+          ls -la /tmp/ogx-wheel/
 
       - name: Run BFF tests (replay mode)
         id: replay-test
         continue-on-error: true
         working-directory: odh-dashboard/packages/gen-ai/bff
         env:
-          UV_FIND_LINKS: ${{ (matrix.source == 'dev' || contains(needs.setup.outputs.manual_version, 'dev')) && '/tmp/lls-wheel' || '' }}
+          UV_FIND_LINKS: ${{ (matrix.source == 'dev' || contains(needs.setup.outputs.manual_version, 'dev')) && '/tmp/ogx-wheel' || '' }}
         run: |
-          echo "Testing with Llama Stack ${{ steps.resolve-version.outputs.version }} (source: ${{ matrix.source }})"
+          echo "Testing with OGX ${{ steps.resolve-version.outputs.version }} (source: ${{ matrix.source }})"
           TEST_LLAMA_STACK_VERSION=${{ steps.resolve-version.outputs.version }} make test
 
       - name: Run BFF tests (recording mode)
@@ -133,9 +133,9 @@ jobs:
         working-directory: odh-dashboard/packages/gen-ai/bff
         env:
           GEMINI_API_KEY: ${{ secrets.GFEMINI_API_KEY }}
-          UV_FIND_LINKS: ${{ (matrix.source == 'dev' || contains(needs.setup.outputs.manual_version, 'dev')) && '/tmp/lls-wheel' || '' }}
+          UV_FIND_LINKS: ${{ (matrix.source == 'dev' || contains(needs.setup.outputs.manual_version, 'dev')) && '/tmp/ogx-wheel' || '' }}
         run: |
-          echo "Recording with Llama Stack ${{ steps.resolve-version.outputs.version }} (source: ${{ matrix.source }})"
+          echo "Recording with OGX ${{ steps.resolve-version.outputs.version }} (source: ${{ matrix.source }})"
           TEST_LLAMA_STACK_VERSION=${{ steps.resolve-version.outputs.version }} make llamastack-record
 
       - name: Determine result
@@ -264,7 +264,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## Gen AI BFF - Llama Stack Compatibility Test"
+            echo "## Gen AI BFF - OGX Compatibility Test"
             echo ""
             echo "| Source | Version | Status | Recording Required |"
             echo "|--------|---------|--------|--------------------|"
@@ -298,7 +298,7 @@ jobs:
             S=$(jq -r '.status' /tmp/results/results-stable.json)
             V=$(jq -r '.tested_version' /tmp/results/results-stable.json)
             if [[ "$S" == "incompatible" ]]; then
-              echo "::error::Stable Llama Stack $V is incompatible with the BFF"
+              echo "::error::Stable OGX $V is incompatible with the BFF"
               FAIL=true
             fi
           fi
@@ -306,7 +306,7 @@ jobs:
             S=$(jq -r '.status' /tmp/results/results-dev.json)
             V=$(jq -r '.tested_version' /tmp/results/results-dev.json)
             if [[ "$S" == "incompatible" ]]; then
-              echo "::error::Dev Llama Stack $V is incompatible with the BFF"
+              echo "::error::Dev OGX $V is incompatible with the BFF"
               FAIL=true
             fi
           fi
