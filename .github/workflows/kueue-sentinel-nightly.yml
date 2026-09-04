@@ -133,12 +133,6 @@ jobs:
           cluster_name: kueue-sentinel
           node_image: ${{ env.KIND_NODE_IMAGE }}
 
-      - name: Install kubeconform
-        run: |
-          curl -fsSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
-            | tar xz
-          sudo mv kubeconform /usr/local/bin/kubeconform
-
       - name: Setup kind cluster with Kueue and Trainer
         env:
           KUEUE_TAG: ${{ steps.versions.outputs.kueue }}
