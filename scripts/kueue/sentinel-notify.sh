@@ -46,7 +46,7 @@ if [[ "${ALL_PASS}" == "true" ]]; then
   OVERALL_EMOJI=":white_check_mark:"
   LAYER1_LINE="Layer 1 · Schema Analysis    ${L1_ICON}  No changes (Kueue ${UPSTREAM_KUEUE_TAG}, Trainer ${UPSTREAM_TRAINER_TAG})"
   LAYER2_LINE="Layer 2 · API Dry-Run        ${L2_ICON}  All dry-run tests passed"
-  LAYER3_LINE="Layer 3 · Integration Smoke  ${L3_ICON}  Submit/pause/resume/create-scale/delete OK"
+  LAYER3_LINE="Layer 3 · Integration Smoke  ${L3_ICON}  Submit/pause/resume/scale-immutable/delete OK"
 else
   OVERALL_STATUS="Kueue Sentinel — Issues Detected"
   OVERALL_EMOJI=":x:"
