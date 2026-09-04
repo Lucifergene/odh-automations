@@ -1,0 +1,221 @@
+name: 'Kueue Sentinel - Daily Compatibility Check'
+
+on:
+  schedule:
+    - cron: '30 6 * * *'
+
+  workflow_dispatch:
+    inputs:
+      dashboard_ref:
+        description: 'odh-dashboard branch/tag to test against'
+        required: false
+        type: string
+        default: 'feat/kueue-sentinel-contract-tests'
+      post_to_channel:
+        description: 'Post results to Slack channel'
+        required: false
+        type: boolean
+        default: false
+
+  push:
+    paths:
+      - '.github/workflows/kueue-sentinel-nightly.yml'
+      - 'scripts/kueue/**'
+      - 'tests/kueue/**'
+
+  pull_request:
+    paths:
+      - '.github/workflows/kueue-sentinel-nightly.yml'
+      - 'scripts/kueue/**'
+      - 'tests/kueue/**'
+
+env:
+  DASHBOARD_REF: ${{ github.event.inputs.dashboard_ref || 'feat/kueue-sentinel-contract-tests' }}
+  RESULTS_DIR: /tmp/kueue-sentinel-results
+  KIND_NODE_IMAGE: kindest/node:v1.31.0
+
+jobs:
+  layer1-schema:
+    runs-on: ubuntu-latest
+    outputs:
+      kueue_tag: ${{ steps.kueue_check.outputs.kueue_tag }}
+      trainer_tag: ${{ steps.trainer_check.outputs.trainer_tag }}
+      l1_result: ${{ steps.l1_result.outputs.result }}
+    steps:
+      - name: Checkout odh-dashboard
+        uses: actions/checkout@v4
+        with:
+          repository: opendatahub-io/odh-dashboard
+          ref: ${{ env.DASHBOARD_REF }}
+          path: odh-dashboard
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: odh-dashboard/package-lock.json
+
+      - name: Install dependencies
+        working-directory: odh-dashboard
+        run: npm ci
+
+      - name: Kueue contract check (latest)
+        id: kueue_check
+        continue-on-error: true
+        working-directory: odh-dashboard
+        env:
+          KUEUE_TAG: latest
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm run kueue:check --workspace=packages/k8s-core 2>&1 | tee /tmp/kueue.txt
+          echo "kueue_tag=$(grep RESOLVED_KUEUE_TAG /tmp/kueue.txt | tail -1 | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Trainer contract check (latest)
+        id: trainer_check
+        continue-on-error: true
+        working-directory: odh-dashboard
+        env:
+          TRAINER_TAG: latest
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm run trainer:check --workspace=packages/model-training 2>&1 | tee /tmp/trainer.txt
+          echo "trainer_tag=$(grep RESOLVED_TRAINER_TAG /tmp/trainer.txt | tail -1 | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Set Layer 1 result
+        id: l1_result
+        if: always()
+        run: |
+          if [[ "${{ steps.kueue_check.outcome }}" == "success" && "${{ steps.trainer_check.outcome }}" == "success" ]]; then
+            echo "result=success-success" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failure" >> "$GITHUB_OUTPUT"
+          fi
+
+  layer2-and-3:
+    runs-on: ubuntu-latest
+    outputs:
+      l2_result: ${{ steps.dryrun.outcome }}
+      l3_result: ${{ steps.smoke.outcome }}
+    steps:
+      - name: Checkout odh-automations
+        uses: actions/checkout@v4
+
+      - name: Checkout odh-dashboard
+        uses: actions/checkout@v4
+        with:
+          repository: opendatahub-io/odh-dashboard
+          ref: ${{ env.DASHBOARD_REF }}
+          path: odh-dashboard
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: odh-dashboard/package-lock.json
+
+      - name: Install dependencies
+        working-directory: odh-dashboard
+        run: npm ci
+
+      - name: Resolve upstream versions for cluster install
+        id: versions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          KUEUE_TAG=$(curl -sf -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            https://api.github.com/repos/kubernetes-sigs/kueue/releases/latest | jq -r .tag_name)
+          TRAINER_TAG=$(curl -sf -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            https://api.github.com/repos/kubeflow/trainer/releases/latest | jq -r .tag_name)
+          echo "kueue=${KUEUE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "trainer=${TRAINER_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Create kind cluster (pinned k8s)
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: kueue-sentinel
+          node_image: ${{ env.KIND_NODE_IMAGE }}
+
+      - name: Install kubeconform
+        run: |
+          curl -fsSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar xz
+          sudo mv kubeconform /usr/local/bin/kubeconform
+
+      - name: Setup kind cluster with Kueue and Trainer
+        env:
+          KUEUE_TAG: ${{ steps.versions.outputs.kueue }}
+          TRAINER_TAG: ${{ steps.versions.outputs.trainer }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x ./scripts/kueue/sentinel-setup-kind.sh
+          ./scripts/kueue/sentinel-setup-kind.sh
+
+      - name: Layer 2 — API dry-run
+        id: dryrun
+        continue-on-error: true
+        working-directory: odh-dashboard
+        run: npm run kueue:test:api --workspace=packages/k8s-core
+
+      - name: Layer 3 — Integration smoke
+        id: smoke
+        continue-on-error: true
+        working-directory: odh-dashboard
+        run: npm run kueue:test:integration --workspace=packages/k8s-core
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [layer1-schema, layer2-and-3]
+    if: always()
+    steps:
+      - name: Checkout odh-automations
+        uses: actions/checkout@v4
+
+      - name: Notify Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.KUEUE_SENTINEL_SLACK_WEBHOOK_URL }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TRIGGER: ${{ github.event_name }}
+          POST_TO_CHANNEL: ${{ github.event.inputs.post_to_channel == true && 'true' || 'false' }}
+          UPSTREAM_KUEUE_TAG: ${{ needs.layer1-schema.outputs.kueue_tag }}
+          UPSTREAM_TRAINER_TAG: ${{ needs.layer1-schema.outputs.trainer_tag }}
+          L1_RESULT: ${{ needs.layer1-schema.outputs.l1_result }}
+          L2_RESULT: ${{ needs.layer2-and-3.outputs.l2_result }}
+          L3_RESULT: ${{ needs.layer2-and-3.outputs.l3_result }}
+          DASHBOARD_REF: ${{ env.DASHBOARD_REF }}
+        run: |
+          chmod +x ./scripts/kueue/sentinel-notify.sh
+          ./scripts/kueue/sentinel-notify.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Kueue Sentinel - Daily Compatibility Check"
+            echo ""
+            echo "| Layer | Status |"
+            echo "|-------|--------|"
+            echo "| Layer 1 (Contract) | ${{ needs.layer1-schema.outputs.l1_result }} |"
+            echo "| Layer 2 (Dry-run) | ${{ needs.layer2-and-3.outputs.l2_result }} |"
+            echo "| Layer 3 (Integration) | ${{ needs.layer2-and-3.outputs.l3_result }} |"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Dashboard ref | ${{ env.DASHBOARD_REF }} |"
+            echo "| Kueue version | ${{ needs.layer1-schema.outputs.kueue_tag }} |"
+            echo "| Trainer version | ${{ needs.layer1-schema.outputs.trainer_tag }} |"
+            echo "| Trigger | ${{ github.event_name }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if any layer failed
+        if: always()
+        run: |
+          FAIL=false
+          if [[ "${{ needs.layer1-schema.outputs.l1_result }}" != "success-success" ]]; then FAIL=true; fi
+          if [[ "${{ needs.layer2-and-3.outputs.l2_result }}" == "failure" ]]; then FAIL=true; fi
+          if [[ "${{ needs.layer2-and-3.outputs.l3_result }}" == "failure" ]]; then FAIL=true; fi
+          if [[ "$FAIL" == "true" ]]; then
+            echo "::error::Kueue Sentinel detected failures"
+            exit 1
+          fi
