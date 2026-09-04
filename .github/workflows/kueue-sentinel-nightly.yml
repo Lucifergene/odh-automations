@@ -32,31 +32,32 @@ env:
 
 jobs:
   layer1-schema:
+    name: '🔍 Schema Check'
     runs-on: ubuntu-latest
     outputs:
       kueue_tag: ${{ steps.kueue_check.outputs.kueue_tag }}
       trainer_tag: ${{ steps.trainer_check.outputs.trainer_tag }}
       l1_result: ${{ steps.l1_result.outputs.result }}
     steps:
-      - name: Checkout odh-dashboard
+      - name: '📥 Checkout odh-dashboard'
         uses: actions/checkout@v4
         with:
           repository: ${{ env.DASHBOARD_REPO }}
           ref: ${{ env.DASHBOARD_REF }}
           path: odh-dashboard
 
-      - name: Set up Node.js
+      - name: '⚙️ Set up Node.js'
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: odh-dashboard/package-lock.json
 
-      - name: Install dependencies
+      - name: '📦 Install dependencies'
         working-directory: odh-dashboard
         run: npm ci
 
-      - name: Kueue contract check (latest)
+      - name: '🔍 Kueue contract check (latest)'
         id: kueue_check
         continue-on-error: true
         working-directory: odh-dashboard
@@ -67,7 +68,7 @@ jobs:
           npm run kueue:check --workspace=packages/k8s-core 2>&1 | tee /tmp/kueue.txt
           echo "kueue_tag=$(grep RESOLVED_KUEUE_TAG /tmp/kueue.txt | tail -1 | cut -d= -f2)" >> "$GITHUB_OUTPUT"
 
-      - name: Trainer contract check (latest)
+      - name: '🔍 Trainer contract check (latest)'
         id: trainer_check
         continue-on-error: true
         working-directory: odh-dashboard
@@ -78,7 +79,7 @@ jobs:
           npm run trainer:check --workspace=packages/model-training 2>&1 | tee /tmp/trainer.txt
           echo "trainer_tag=$(grep RESOLVED_TRAINER_TAG /tmp/trainer.txt | tail -1 | cut -d= -f2)" >> "$GITHUB_OUTPUT"
 
-      - name: Set Layer 1 result
+      - name: '📊 Set Layer 1 result'
         id: l1_result
         if: always()
         run: |
@@ -89,33 +90,36 @@ jobs:
           fi
 
   layer2-and-3:
+    name: '🧪 API & Integration Tests'
     runs-on: ubuntu-latest
     outputs:
       l2_result: ${{ steps.dryrun.outcome }}
       l3_result: ${{ steps.smoke.outcome }}
+      l2_summary: ${{ steps.export_summaries.outputs.l2_summary }}
+      l3_summary: ${{ steps.export_summaries.outputs.l3_summary }}
     steps:
-      - name: Checkout odh-automations
+      - name: '📥 Checkout odh-automations'
         uses: actions/checkout@v4
 
-      - name: Checkout odh-dashboard
+      - name: '📥 Checkout odh-dashboard'
         uses: actions/checkout@v4
         with:
           repository: ${{ env.DASHBOARD_REPO }}
           ref: ${{ env.DASHBOARD_REF }}
           path: odh-dashboard
 
-      - name: Set up Node.js
+      - name: '⚙️ Set up Node.js'
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: odh-dashboard/package-lock.json
 
-      - name: Install dependencies
+      - name: '📦 Install dependencies'
         working-directory: odh-dashboard
         run: npm ci
 
-      - name: Resolve upstream versions for cluster install
+      - name: '🔧 Resolve upstream versions'
         id: versions
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -127,13 +131,13 @@ jobs:
           echo "kueue=${KUEUE_TAG}" >> "$GITHUB_OUTPUT"
           echo "trainer=${TRAINER_TAG}" >> "$GITHUB_OUTPUT"
 
-      - name: Create kind cluster (pinned k8s)
+      - name: '🏗️ Create Kind cluster'
         uses: helm/kind-action@v1
         with:
           cluster_name: kueue-sentinel
           node_image: ${{ env.KIND_NODE_IMAGE }}
 
-      - name: Setup kind cluster with Kueue and Trainer
+      - name: '⚙️ Install Kueue & Trainer'
         env:
           KUEUE_TAG: ${{ steps.versions.outputs.kueue }}
           TRAINER_TAG: ${{ steps.versions.outputs.trainer }}
@@ -142,27 +146,49 @@ jobs:
           chmod +x ./scripts/kueue/sentinel-setup-kind.sh
           ./scripts/kueue/sentinel-setup-kind.sh
 
-      - name: Layer 2 — API dry-run
+      - name: '🔍 Layer 2 — API Dry-run'
         id: dryrun
         continue-on-error: true
         working-directory: odh-dashboard
+        env:
+          RESULTS_DIR: ${{ env.RESULTS_DIR }}
         run: npm run kueue:test:api --workspace=packages/k8s-core
 
-      - name: Layer 3 — Integration smoke
+      - name: '🧪 Layer 3 — Integration Smoke'
         id: smoke
         continue-on-error: true
         working-directory: odh-dashboard
+        env:
+          RESULTS_DIR: ${{ env.RESULTS_DIR }}
         run: npm run kueue:test:integration --workspace=packages/k8s-core
 
+      - name: '📊 Generate rich job summary'
+        if: always()
+        env:
+          RESULTS_DIR: ${{ env.RESULTS_DIR }}
+        run: |
+          chmod +x ./scripts/kueue/sentinel-summary.sh
+          ./scripts/kueue/sentinel-summary.sh
+
+      - name: '📤 Export layer summaries as outputs'
+        id: export_summaries
+        if: always()
+        env:
+          RESULTS_DIR: ${{ env.RESULTS_DIR }}
+          L2_RESULT: ${{ steps.dryrun.outcome }}
+          L3_RESULT: ${{ steps.smoke.outcome }}
+        run: python3 ./scripts/kueue/compute-summaries.py >> "$GITHUB_OUTPUT"
+
   notify:
+    name: '📢 Report & Notify'
     runs-on: ubuntu-latest
     needs: [layer1-schema, layer2-and-3]
     if: always()
     steps:
-      - name: Checkout odh-automations
+      - name: '📥 Checkout odh-automations'
         uses: actions/checkout@v4
 
-      - name: Notify Slack
+      - name: '📣 Notify Slack'
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.KUEUE_SENTINEL_SLACK_WEBHOOK_URL }}
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -171,31 +197,58 @@ jobs:
           L1_RESULT: ${{ needs.layer1-schema.outputs.l1_result }}
           L2_RESULT: ${{ needs.layer2-and-3.outputs.l2_result }}
           L3_RESULT: ${{ needs.layer2-and-3.outputs.l3_result }}
+          L2_SUMMARY: ${{ needs.layer2-and-3.outputs.l2_summary }}
+          L3_SUMMARY: ${{ needs.layer2-and-3.outputs.l3_summary }}
         run: |
           chmod +x ./scripts/kueue/sentinel-notify.sh
           ./scripts/kueue/sentinel-notify.sh
 
-      - name: Summary
+      - name: '📊 Workflow summary'
         if: always()
+        env:
+          KUEUE_TAG: ${{ needs.layer1-schema.outputs.kueue_tag }}
+          TRAINER_TAG: ${{ needs.layer1-schema.outputs.trainer_tag }}
+          L1_RESULT: ${{ needs.layer1-schema.outputs.l1_result }}
+          L2_RESULT: ${{ needs.layer2-and-3.outputs.l2_result }}
+          L3_RESULT: ${{ needs.layer2-and-3.outputs.l3_result }}
+          L2_SUMMARY: ${{ needs.layer2-and-3.outputs.l2_summary }}
+          L3_SUMMARY: ${{ needs.layer2-and-3.outputs.l3_summary }}
         run: |
+          layer_status() {
+            case "$1" in
+              success|success-success) printf '✅ PASSED' ;;
+              *) printf '❌ FAILED' ;;
+            esac
+          }
+
+          if [[ "${L1_RESULT}" == "success-success" && "${L2_RESULT}" == "success" && "${L3_RESULT}" == "success" ]]; then
+            HEADER="All Clear"
+          else
+            HEADER="Issues Detected"
+          fi
+
+          L1_LINE="TypeScript types aligned"
+          if [[ "${L1_RESULT}" != "success-success" ]]; then
+            L1_LINE=":warning: Type drift detected"
+          fi
+
           {
-            echo "## Kueue Sentinel - Daily Compatibility Check"
+            echo "# 🛡️ Kueue Sentinel — ${HEADER}"
+            echo "> Kueue ${KUEUE_TAG} × Trainer ${TRAINER_TAG} · Kind v1.32 · $(date -u +%Y-%m-%d)"
             echo ""
-            echo "| Layer | Status |"
-            echo "|-------|--------|"
-            echo "| Layer 1 (Contract) | ${{ needs.layer1-schema.outputs.l1_result }} |"
-            echo "| Layer 2 (Dry-run) | ${{ needs.layer2-and-3.outputs.l2_result }} |"
-            echo "| Layer 3 (Integration) | ${{ needs.layer2-and-3.outputs.l3_result }} |"
+            echo "| Layer | Status | Result |"
+            echo "|-------|--------|--------|"
+            echo "| 🔍 Schema (L1) | $(layer_status "${L1_RESULT}") | ${L1_LINE} |"
+            echo "| 🔬 Dry-run (L2) | $(layer_status "${L2_RESULT}") | ${L2_SUMMARY} |"
+            echo "| 🧪 Integration (L3) | $(layer_status "${L3_RESULT}") | ${L3_SUMMARY} |"
             echo ""
             echo "| Field | Value |"
             echo "|-------|-------|"
             echo "| Dashboard ref | ${{ env.DASHBOARD_REF }} |"
-            echo "| Kueue version | ${{ needs.layer1-schema.outputs.kueue_tag }} |"
-            echo "| Trainer version | ${{ needs.layer1-schema.outputs.trainer_tag }} |"
             echo "| Trigger | ${{ github.event_name }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Fail if any layer failed
+      - name: '🚦 Fail if any layer failed'
         if: always()
         run: |
           FAIL=false

@@ -27,11 +27,14 @@ if actual_keys != sorted(expected_keys):
 if "action" in payload:
     raise SystemExit("action field must not be present")
 
-all_pass = (
-    payload["layer1_summary"].startswith(":white_check_mark:")
-    and payload["layer2_summary"].startswith(":white_check_mark:")
-    and payload["layer3_summary"].startswith(":white_check_mark:")
-)
+all_pass = payload["overall_emoji"] == ":white_check_mark:"
+
+if all_pass and payload["overall_status"] != "All Clear":
+    raise SystemExit("overall_status must be All Clear when all layers pass")
+
+if not all_pass and payload["overall_status"] != "Issues Detected":
+    raise SystemExit("overall_status must be Issues Detected when any layer fails")
+
 if all_pass and payload["details"] != "":
     raise SystemExit("details must be empty when all layers pass")
 
@@ -40,14 +43,38 @@ if not all_pass and payload["details"] == "":
 
 if not all_pass and "Reproduce locally:" not in payload["details"]:
     raise SystemExit("failure details must include reproduce instructions")
+
+if not all_pass and "`" in payload["details"]:
+    raise SystemExit("failure details must not include backticks")
+
+layer_summaries = [
+    payload["layer1_summary"],
+    payload["layer2_summary"],
+    payload["layer3_summary"],
+]
+
+if all_pass and any(":warning:" in summary for summary in layer_summaries):
+    raise SystemExit("layer summaries must not include :warning: when all layers pass")
+
+if not all_pass and not any(":warning:" in summary for summary in layer_summaries):
+    raise SystemExit("at least one layer summary must include :warning: when any layer fails")
+
+if "*" in "".join(layer_summaries):
+    raise SystemExit("layer summaries must not include mrkdwn asterisks")
 PY
 }
 
 for L1 in success failure; do
   for L2 in success failure; do
     for L3 in success failure; do
+      if [[ "${L1}" == "success" ]]; then
+        L1_RESULT="success-success"
+      else
+        L1_RESULT="failure"
+      fi
+
       PAYLOAD="$(UPSTREAM_KUEUE_TAG=v0.20.0 UPSTREAM_TRAINER_TAG=v2.5.0 \
-        L1_RESULT="${L1}-${L1}" L2_RESULT="${L2}" L3_RESULT="${L3}" \
+        L1_RESULT="${L1_RESULT}" L2_RESULT="${L2}" L3_RESULT="${L3}" \
         WORKFLOW_RUN_URL=https://github.com/example/actions/runs/1 \
         DRY_RUN=true bash "${NOTIFY_SCRIPT}")"
       validate_payload "${PAYLOAD}" \
