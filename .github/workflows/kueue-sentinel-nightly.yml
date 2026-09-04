@@ -28,7 +28,7 @@ env:
   DASHBOARD_REPO: Lucifergene/odh-dashboard
   DASHBOARD_REF: ${{ github.event.inputs.dashboard_ref || 'feat/kueue-sentinel-contract-tests' }}
   RESULTS_DIR: /tmp/kueue-sentinel-results
-  KIND_NODE_IMAGE: kindest/node:v1.31.0
+  KIND_NODE_IMAGE: kindest/node:v1.32.11
 
 jobs:
   layer1-schema:
