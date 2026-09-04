@@ -20,9 +20,6 @@ L1_RESULT="${L1_RESULT:-unknown}"
 L2_RESULT="${L2_RESULT:-unknown}"
 L3_RESULT="${L3_RESULT:-unknown}"
 WORKFLOW_RUN_URL="${WORKFLOW_RUN_URL:-}"
-TRIGGER="${TRIGGER:-unknown}"
-POST_TO_CHANNEL="${POST_TO_CHANNEL:-false}"
-DASHBOARD_REF="${DASHBOARD_REF:-main}"
 
 layer_icon() {
   case "$1" in
@@ -77,12 +74,9 @@ PAYLOAD=$(cat <<EOF
   "layer1_summary": "$(json_escape "${LAYER1_LINE}")",
   "layer2_summary": "$(json_escape "${LAYER2_LINE}")",
   "layer3_summary": "$(json_escape "${LAYER3_LINE}")",
-  "operator_summary": "$(json_escape "dashboard_ref=${DASHBOARD_REF}")",
   "details": "$(json_escape "${DETAILS}")",
   "action": "$(json_escape "${ACTION}")",
-  "trigger": "$(json_escape "${TRIGGER}")",
-  "workflow_run_url": "$(json_escape "${WORKFLOW_RUN_URL}")",
-  "post_to_channel": "$(json_escape "${POST_TO_CHANNEL}")"
+  "workflow_run_url": "$(json_escape "${WORKFLOW_RUN_URL}")"
 }
 EOF
 )

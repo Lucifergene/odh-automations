@@ -11,11 +11,6 @@ on:
         required: false
         type: string
         default: 'feat/kueue-sentinel-contract-tests'
-      post_to_channel:
-        description: 'Post results to Slack channel'
-        required: false
-        type: boolean
-        default: false
 
   push:
     paths:
@@ -30,6 +25,7 @@ on:
       - 'tests/kueue/**'
 
 env:
+  DASHBOARD_REPO: Lucifergene/odh-dashboard
   DASHBOARD_REF: ${{ github.event.inputs.dashboard_ref || 'feat/kueue-sentinel-contract-tests' }}
   RESULTS_DIR: /tmp/kueue-sentinel-results
   KIND_NODE_IMAGE: kindest/node:v1.31.0
@@ -45,7 +41,7 @@ jobs:
       - name: Checkout odh-dashboard
         uses: actions/checkout@v4
         with:
-          repository: opendatahub-io/odh-dashboard
+          repository: ${{ env.DASHBOARD_REPO }}
           ref: ${{ env.DASHBOARD_REF }}
           path: odh-dashboard
 
@@ -104,7 +100,7 @@ jobs:
       - name: Checkout odh-dashboard
         uses: actions/checkout@v4
         with:
-          repository: opendatahub-io/odh-dashboard
+          repository: ${{ env.DASHBOARD_REPO }}
           ref: ${{ env.DASHBOARD_REF }}
           path: odh-dashboard
 
@@ -176,14 +172,11 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.KUEUE_SENTINEL_SLACK_WEBHOOK_URL }}
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TRIGGER: ${{ github.event_name }}
-          POST_TO_CHANNEL: ${{ github.event.inputs.post_to_channel == true && 'true' || 'false' }}
           UPSTREAM_KUEUE_TAG: ${{ needs.layer1-schema.outputs.kueue_tag }}
           UPSTREAM_TRAINER_TAG: ${{ needs.layer1-schema.outputs.trainer_tag }}
           L1_RESULT: ${{ needs.layer1-schema.outputs.l1_result }}
           L2_RESULT: ${{ needs.layer2-and-3.outputs.l2_result }}
           L3_RESULT: ${{ needs.layer2-and-3.outputs.l3_result }}
-          DASHBOARD_REF: ${{ env.DASHBOARD_REF }}
         run: |
           chmod +x ./scripts/kueue/sentinel-notify.sh
           ./scripts/kueue/sentinel-notify.sh
