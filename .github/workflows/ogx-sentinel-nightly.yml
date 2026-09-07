@@ -1,4 +1,4 @@
-name: 'Gen AI - BFF - OGX Compatibility'
+name: 'OGX Sentinel - Daily Compatibility Check'
 
 on:
   schedule:
@@ -15,16 +15,6 @@ on:
         required: false
         type: boolean
         default: false
-
-  push:
-    paths:
-      - '.github/workflows/gen-ai-bff-nightly.yml'
-      - 'scripts/**'
-
-  pull_request:
-    paths:
-      - '.github/workflows/gen-ai-bff-nightly.yml'
-      - 'scripts/**'
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -257,14 +247,14 @@ jobs:
             echo "Dev: not tested"
           fi
 
-          chmod +x ./scripts/notify-slack.sh
-          ./scripts/notify-slack.sh
+          chmod +x ./sentinels/ogx/scripts/notify-slack.sh
+          ./sentinels/ogx/scripts/notify-slack.sh
 
       - name: Summary
         if: always()
         run: |
           {
-            echo "## Gen AI BFF - OGX Compatibility Test"
+            echo "## OGX Sentinel - Daily Compatibility Check"
             echo ""
             echo "| Source | Version | Status | Recording Required |"
             echo "|--------|---------|--------|--------------------|"

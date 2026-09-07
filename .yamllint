@@ -1,0 +1,9 @@
+---
+extends: default
+
+rules:
+  line-length:
+    max: 140
+    allow-non-breakable-inline-mappings: true
+  truthy:
+    allowed-values: ['true', 'false', 'on']

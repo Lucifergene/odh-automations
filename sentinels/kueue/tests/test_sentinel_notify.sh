@@ -2,8 +2,8 @@
 # Validates sentinel-notify.sh produces well-formed JSON for all outcome combos.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-NOTIFY_SCRIPT="${ROOT_DIR}/scripts/kueue/sentinel-notify.sh"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+NOTIFY_SCRIPT="${ROOT_DIR}/scripts/sentinel-notify.sh"
 
 EXPECTED_KEYS='["details","layer1_summary","layer2_summary","layer3_summary","overall_emoji","overall_status","workflow_run_url"]'
 

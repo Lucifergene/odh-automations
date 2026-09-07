@@ -2,7 +2,7 @@ name: 'Kueue Sentinel - Daily Compatibility Check'
 
 on:
   schedule:
-    - cron: '30 6 * * *'
+    - cron: '30 7 * * *' # Every day at 1:00 PM IST (07:30 UTC) — 1h after OGX sentinel
 
   workflow_dispatch:
     inputs:
@@ -11,18 +11,6 @@ on:
         required: false
         type: string
         default: 'feat/kueue-sentinel-contract-tests'
-
-  push:
-    paths:
-      - '.github/workflows/kueue-sentinel-nightly.yml'
-      - 'scripts/kueue/**'
-      - 'tests/kueue/**'
-
-  pull_request:
-    paths:
-      - '.github/workflows/kueue-sentinel-nightly.yml'
-      - 'scripts/kueue/**'
-      - 'tests/kueue/**'
 
 env:
   DASHBOARD_REPO: Lucifergene/odh-dashboard
@@ -143,8 +131,8 @@ jobs:
           TRAINER_TAG: ${{ steps.versions.outputs.trainer }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          chmod +x ./scripts/kueue/sentinel-setup-kind.sh
-          ./scripts/kueue/sentinel-setup-kind.sh
+          chmod +x ./sentinels/kueue/scripts/sentinel-setup-kind.sh
+          ./sentinels/kueue/scripts/sentinel-setup-kind.sh
 
       - name: '🔍 Layer 2 — API Dry-run'
         id: dryrun
@@ -167,8 +155,8 @@ jobs:
         env:
           RESULTS_DIR: ${{ env.RESULTS_DIR }}
         run: |
-          chmod +x ./scripts/kueue/sentinel-summary.sh
-          ./scripts/kueue/sentinel-summary.sh
+          chmod +x ./sentinels/kueue/scripts/sentinel-summary.sh
+          ./sentinels/kueue/scripts/sentinel-summary.sh
 
       - name: '📤 Export layer summaries as outputs'
         id: export_summaries
@@ -177,7 +165,7 @@ jobs:
           RESULTS_DIR: ${{ env.RESULTS_DIR }}
           L2_RESULT: ${{ steps.dryrun.outcome }}
           L3_RESULT: ${{ steps.smoke.outcome }}
-        run: python3 ./scripts/kueue/compute-summaries.py >> "$GITHUB_OUTPUT"
+        run: python3 ./sentinels/kueue/scripts/compute-summaries.py >> "$GITHUB_OUTPUT"
 
   notify:
     name: '📢 Report & Notify'
@@ -200,8 +188,8 @@ jobs:
           L2_SUMMARY: ${{ needs.layer2-and-3.outputs.l2_summary }}
           L3_SUMMARY: ${{ needs.layer2-and-3.outputs.l3_summary }}
         run: |
-          chmod +x ./scripts/kueue/sentinel-notify.sh
-          ./scripts/kueue/sentinel-notify.sh
+          chmod +x ./sentinels/kueue/scripts/sentinel-notify.sh
+          ./sentinels/kueue/scripts/sentinel-notify.sh
 
       - name: '📊 Workflow summary'
         if: always()

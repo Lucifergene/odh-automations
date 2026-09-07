@@ -1,0 +1,40 @@
+name: New Sentinel
+description: Propose a new upstream compatibility sentinel.
+title: "[Sentinel]: "
+labels: ["kind/enhancement"]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Sentinel name
+      description: Short lowercase identifier (e.g. feast, model-registry)
+    validations:
+      required: true
+  - type: textarea
+    id: upstream
+    attributes:
+      label: Upstream dependency
+      description: GitHub repo, release source, version pinning strategy
+    validations:
+      required: true
+  - type: textarea
+    id: incidents
+    attributes:
+      label: Incidents or pain this prevents
+      description: Jira tickets, Slack threads, or production breakages that motivated this
+    validations:
+      required: true
+  - type: textarea
+    id: layers
+    attributes:
+      label: Proposed test layers
+      description: e.g. L1 contract, L2 dry-run, L3 Kind integration
+    validations:
+      required: true
+  - type: textarea
+    id: dashboard
+    attributes:
+      label: odh-dashboard packages affected
+      description: Which packages/workspaces need contract or integration tests
+    validations:
+      required: false

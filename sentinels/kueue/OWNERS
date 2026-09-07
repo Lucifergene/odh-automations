@@ -1,0 +1,5 @@
+approvers:
+  - kueue-sentinel-approvers
+
+reviewers:
+  - kueue-sentinel-approvers

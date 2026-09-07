@@ -1,0 +1,36 @@
+name: Bug Report
+description: Report a problem with a sentinel workflow or script.
+title: "[Bug]: "
+labels: ["kind/bug"]
+body:
+  - type: dropdown
+    id: sentinel
+    attributes:
+      label: Sentinel
+      options:
+        - OGX
+        - Kueue
+        - Shared utilities
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Include workflow run URL if available.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: e.g. manual workflow_dispatch inputs, local make test command
+    validations:
+      required: false

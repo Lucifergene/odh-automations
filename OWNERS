@@ -1,0 +1,8 @@
+# Prow-compatible ownership for odh-automations.
+# Most specific path wins.
+
+approvers:
+  - lucifergene
+
+reviewers:
+  - lucifergene

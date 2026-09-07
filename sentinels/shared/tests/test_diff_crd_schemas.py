@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "shared" / "diff-crd-schemas.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "diff-crd-schemas.py"
 
 
 def write_crd(

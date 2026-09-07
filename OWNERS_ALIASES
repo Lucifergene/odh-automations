@@ -1,0 +1,7 @@
+aliases:
+  ogx-sentinel-approvers:
+    - lucifergene
+  kueue-sentinel-approvers:
+    - lucifergene
+  sentinel-maintainers:
+    - lucifergene
