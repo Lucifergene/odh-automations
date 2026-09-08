@@ -44,14 +44,20 @@ if all_pass and not has_drift and payload["details"] != "":
 if all_pass and has_drift and payload["details"] == "":
     raise SystemExit("details must include bump instructions when all layers pass but VERSIONS pin is stale")
 
-if all_pass and has_drift and "VERSIONS pin is out of date" not in payload["details"]:
-    raise SystemExit("details must mention VERSIONS pin when version drift exists")
+if all_pass and has_drift and "New upstream version available" not in payload["details"]:
+    raise SystemExit("details must mention new upstream availability when version drift exists")
+
+if all_pass and has_drift and "RHBoK release" not in payload["details"]:
+    raise SystemExit("details must mention RHBoK release decision when version drift exists")
 
 if not all_pass and payload["details"] == "":
     raise SystemExit("details must be set when any layer fails")
 
 if not all_pass and "Reproduce locally:" not in payload["details"]:
     raise SystemExit("failure details must include reproduce instructions")
+
+if not all_pass and "Fix:" not in payload["details"]:
+    raise SystemExit("failure details must include fix instructions")
 
 if "`" in payload["details"]:
     raise SystemExit("details must not include backticks")
@@ -71,12 +77,12 @@ if not all_pass and not any(":warning:" in summary for summary in layer_summarie
 if "*" in "".join(layer_summaries):
     raise SystemExit("layer summaries must not include mrkdwn asterisks")
 
-# Version drift: layer1_summary must signal the stale pin
-if has_drift and ":arrow_up: VERSIONS pin stale" not in payload["layer1_summary"]:
-    raise SystemExit("layer1_summary must note stale VERSIONS pin when version drift exists")
+# Version drift: layer1_summary must signal that a newer upstream is available
+if has_drift and ":information_source: newer upstream available" not in payload["layer1_summary"]:
+    raise SystemExit("layer1_summary must note newer upstream availability when version drift exists")
 
-if not has_drift and ":arrow_up:" in payload["layer1_summary"]:
-    raise SystemExit("layer1_summary must not mention pin bump when versions are in sync")
+if not has_drift and ":information_source:" in payload["layer1_summary"]:
+    raise SystemExit("layer1_summary must not mention newer upstream when versions are in sync")
 PY
 }
 
