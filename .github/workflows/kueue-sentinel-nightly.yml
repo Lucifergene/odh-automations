@@ -26,6 +26,8 @@ jobs:
       kueue_tag: ${{ steps.kueue_check.outputs.kueue_tag }}
       trainer_tag: ${{ steps.trainer_check.outputs.trainer_tag }}
       l1_result: ${{ steps.l1_result.outputs.result }}
+      kueue_tag_pinned: ${{ steps.pinned_versions.outputs.kueue_tag_pinned }}
+      trainer_tag_pinned: ${{ steps.pinned_versions.outputs.trainer_tag_pinned }}
     steps:
       - name: '📥 Checkout odh-dashboard'
         uses: actions/checkout@v4
@@ -44,6 +46,15 @@ jobs:
       - name: '📦 Install dependencies'
         working-directory: odh-dashboard
         run: npm ci
+
+      - name: '📌 Read pinned versions from VERSIONS files'
+        id: pinned_versions
+        run: |
+          KUEUE_PINNED=$(grep -E '^KUEUE_TAG=' odh-dashboard/packages/k8s-core/scripts/VERSIONS | cut -d= -f2 || true)
+          TRAINER_PINNED=$(grep -E '^TRAINER_TAG=' odh-dashboard/packages/model-training/scripts/VERSIONS | cut -d= -f2 || true)
+          echo "kueue_tag_pinned=${KUEUE_PINNED}" >> "$GITHUB_OUTPUT"
+          echo "trainer_tag_pinned=${TRAINER_PINNED}" >> "$GITHUB_OUTPUT"
+          echo "Pinned — Kueue: ${KUEUE_PINNED}, Trainer: ${TRAINER_PINNED}"
 
       - name: '🔍 Kueue contract check (latest)'
         id: kueue_check
@@ -182,6 +193,8 @@ jobs:
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           UPSTREAM_KUEUE_TAG: ${{ needs.layer1-schema.outputs.kueue_tag }}
           UPSTREAM_TRAINER_TAG: ${{ needs.layer1-schema.outputs.trainer_tag }}
+          KUEUE_TAG_PINNED: ${{ needs.layer1-schema.outputs.kueue_tag_pinned }}
+          TRAINER_TAG_PINNED: ${{ needs.layer1-schema.outputs.trainer_tag_pinned }}
           L1_RESULT: ${{ needs.layer1-schema.outputs.l1_result }}
           L2_RESULT: ${{ needs.layer2-and-3.outputs.l2_result }}
           L3_RESULT: ${{ needs.layer2-and-3.outputs.l3_result }}

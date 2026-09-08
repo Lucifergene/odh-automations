@@ -13,6 +13,10 @@ json_escape() {
 
 UPSTREAM_KUEUE_TAG="${UPSTREAM_KUEUE_TAG:-unknown}"
 UPSTREAM_TRAINER_TAG="${UPSTREAM_TRAINER_TAG:-unknown}"
+# Pinned versions from VERSIONS files in odh-dashboard (what PRs are tested against).
+# If set and different from the upstream tags above, a bump notice is added to the report.
+KUEUE_TAG_PINNED="${KUEUE_TAG_PINNED:-}"
+TRAINER_TAG_PINNED="${TRAINER_TAG_PINNED:-}"
 L1_RESULT="${L1_RESULT:-unknown}"
 L2_RESULT="${L2_RESULT:-unknown}"
 L3_RESULT="${L3_RESULT:-unknown}"
@@ -38,10 +42,29 @@ done
 REPRO_KUEUE="cd packages/k8s-core && KUEUE_TAG=${UPSTREAM_KUEUE_TAG} npm run kueue:check"
 REPRO_TRAINER="cd packages/model-training && TRAINER_TAG=${UPSTREAM_TRAINER_TAG} npm run trainer:check"
 
+# Detect whether the pinned VERSIONS in odh-dashboard are behind what the sentinel just tested.
+# This means PRs are contract-tested against an older CRD — the team needs to bump the pin.
+VERSION_DRIFT_LINES=()
+if [[ -n "${KUEUE_TAG_PINNED}" && "${KUEUE_TAG_PINNED}" != "${UPSTREAM_KUEUE_TAG}" ]]; then
+  VERSION_DRIFT_LINES+=("Kueue VERSIONS pin: ${KUEUE_TAG_PINNED} — bump to ${UPSTREAM_KUEUE_TAG}")
+fi
+if [[ -n "${TRAINER_TAG_PINNED}" && "${TRAINER_TAG_PINNED}" != "${UPSTREAM_TRAINER_TAG}" ]]; then
+  VERSION_DRIFT_LINES+=("Trainer VERSIONS pin: ${TRAINER_TAG_PINNED} — bump to ${UPSTREAM_TRAINER_TAG}")
+fi
+HAS_VERSION_DRIFT=false
+VERSION_DRIFT_NOTICE=""
+if [[ ${#VERSION_DRIFT_LINES[@]} -gt 0 ]]; then
+  HAS_VERSION_DRIFT=true
+  VERSION_DRIFT_NOTICE=$(printf '%s\n' "${VERSION_DRIFT_LINES[@]}")
+fi
+
 if layer_passed "${L1_RESULT}"; then
   LAYER1_SUMMARY="Kueue ${UPSTREAM_KUEUE_TAG}, Trainer ${UPSTREAM_TRAINER_TAG} — TypeScript types aligned"
 else
   LAYER1_SUMMARY=":warning: Type drift detected — CRD changed in Kueue ${UPSTREAM_KUEUE_TAG} or Trainer ${UPSTREAM_TRAINER_TAG}"
+fi
+if [[ "${HAS_VERSION_DRIFT}" == "true" ]]; then
+  LAYER1_SUMMARY="${LAYER1_SUMMARY} — :arrow_up: VERSIONS pin stale"
 fi
 
 if [[ -z "${L2_SUMMARY}" ]]; then
@@ -63,13 +86,26 @@ fi
 if [[ "${ALL_PASS}" == "true" ]]; then
   OVERALL_STATUS="All Clear"
   OVERALL_EMOJI=":white_check_mark:"
-  DETAILS=""
+  if [[ "${HAS_VERSION_DRIFT}" == "true" ]]; then
+    # Tests passed against the new upstream version — safe to bump the pin.
+    DETAILS="VERSIONS pin is out of date — tests passed against the new upstream, safe to bump:
+${VERSION_DRIFT_NOTICE}
+Run: KUEUE_TAG=${UPSTREAM_KUEUE_TAG} npm run kueue:check (packages/k8s-core)
+Run: TRAINER_TAG=${UPSTREAM_TRAINER_TAG} npm run trainer:check (packages/model-training)"
+  else
+    DETAILS=""
+  fi
 else
   OVERALL_STATUS="Issues Detected"
   OVERALL_EMOJI=":x:"
   DETAILS="Reproduce locally:
 • ${REPRO_KUEUE}
 • ${REPRO_TRAINER}"
+  if [[ "${HAS_VERSION_DRIFT}" == "true" ]]; then
+    DETAILS="${DETAILS}
+VERSIONS pin is also out of date — after fixing, bump:
+${VERSION_DRIFT_NOTICE}"
+  fi
 fi
 
 PAYLOAD=$(cat <<EOF
